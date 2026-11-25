@@ -1,0 +1,303 @@
+--[[
+    CHAT HACK - LocalScript
+    Features: AimHead, Noclip, Infinite Jump, Speed (customizable)
+    Place this LocalScript in StarterPlayerScripts.
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+local camera = workspace.CurrentCamera
+
+-- ---------------------------------------------------------------------------
+-- Helper: wait for character and set up references
+-- ---------------------------------------------------------------------------
+local character = nil
+local humanoid = nil
+local function setupCharacter()
+    character = player.Character or player.CharacterAdded:Wait()
+    humanoid = character:WaitForChild("Humanoid")
+    -- Re‑apply noclip if it was enabled before respawn
+    if _G.noclipEnabled then
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+                part.Transparency = 0.5
+            end
+        end
+    end
+    -- Re‑apply speed if enabled
+    if _G.speedEnabled then
+        humanoid.WalkSpeed = _G.speedValue
+    else
+        humanoid.WalkSpeed = 16 -- default
+    end
+end
+setupCharacter()
+player.CharacterAdded:Connect(setupCharacter)
+
+-- ---------------------------------------------------------------------------
+-- UI creation
+-- ---------------------------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ChatHackGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 400, 0, 460) -- extra height for speed UI
+mainFrame.Position = UDim2.new(0.5, -200, 0.5, -230)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, 0, 1, 0)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+minimizeBtn.Position = UDim2.new(1, -35, 0, 5)
+minimizeBtn.Text = "-"
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+minimizeBtn.Parent = mainFrame
+
+local isMinimized = false
+minimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    if isMinimized then
+        contentFrame.Visible = false
+        mainFrame:TweenSize(UDim2.new(0, 400, 0, 30), "Out", "Quad", 0.2, true)
+    else
+        contentFrame.Visible = true
+        mainFrame:TweenSize(UDim2.new(0, 400, 0, 460), "Out", "Quad", 0.2, true)
+    end
+end)
+
+-- ---------------------------------------------------------------------------
+-- Drag functionality (works on the whole mainFrame)
+-- ---------------------------------------------------------------------------
+local dragging = false
+local dragInput, mousePos, framePos
+
+local function update(input)
+    local delta = input.Position - mousePos
+    mainFrame.Position = UDim2.new(
+        framePos.X.Scale,
+        framePos.X.Offset + delta.X,
+        framePos.Y.Scale,
+        framePos.Y.Offset + delta.Y
+    )
+end
+
+mainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        mousePos = input.Position
+        framePos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+mainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        update(input)
+    end
+end)
+
+-- ---------------------------------------------------------------------------
+-- Helper to create toggle buttons inside contentFrame
+-- ---------------------------------------------------------------------------
+local function createToggle(name, yPos)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 180, 0, 40)
+    btn.Position = UDim2.new(0, 10, 0, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    btn.Text = name .. ": OFF"
+    btn.Name = name .. "Toggle"
+    btn.Parent = contentFrame
+    return btn
+end
+
+local aimBtn = createToggle("AimHead", 50)
+local noclipBtn = createToggle("Noclip", 100)
+local infJumpBtn = createToggle("InfiniteJump", 150)
+local speedBtn = createToggle("Speed", 200)
+
+-- TextBox for custom speed value
+local speedBox = Instance.new("TextBox")
+speedBox.Size = UDim2.new(0, 80, 0, 30)
+speedBox.Position = UDim2.new(0, 210, 0, 205)
+speedBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+speedBox.Text = "50"
+speedBox.TextColor3 = Color3.fromRGB(255,255,255)
+speedBox.ClearTextOnFocus = false
+speedBox.Parent = contentFrame
+
+-- ---------------------------------------------------------------------------
+-- State variables (global for easy access from CharacterAdded)
+-- ---------------------------------------------------------------------------
+_G.aimEnabled = false
+_G.noclipEnabled = false
+_G.infJumpEnabled = false
+_G.speedEnabled = false
+_G.speedValue = 50 -- default custom speed
+
+-- ---------------------------------------------------------------------------
+-- AimHead functionality
+-- ---------------------------------------------------------------------------
+local function getNearestEnemyHead()
+    local nearestDist = math.huge
+    local nearestHead = nil
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character:FindFirstChild("Head") then
+            local head = plr.Character.Head
+            local dist = (head.Position - camera.CFrame.Position).Magnitude
+            if dist < nearestDist then
+                nearestDist = dist
+                nearestHead = head
+            end
+        end
+    end
+    return nearestHead
+end
+
+-- ---------------------------------------------------------------------------
+-- Noclip helper (applies to current character)
+-- ---------------------------------------------------------------------------
+local function applyNoclip()
+    if not character then return end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+            part.Transparency = 0.5
+        end
+    end
+end
+
+local function removeNoclip()
+    if not character then return end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = true
+            part.Transparency = 0
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Infinite Jump connection handling
+-- ---------------------------------------------------------------------------
+local infJumpConn = nil
+local function onJumpRequest()
+    if _G.infJumpEnabled and humanoid then
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Main loop – runs every RenderStepped
+-- ---------------------------------------------------------------------------
+RunService.RenderStepped:Connect(function()
+    if _G.aimEnabled then
+        local head = getNearestEnemyHead()
+        if head then
+            local camPos = camera.CFrame.Position
+            local direction = (head.Position - camPos).Unit
+            camera.CFrame = CFrame.new(camPos, camPos + direction)
+        end
+    end
+    if _G.noclipEnabled then
+        applyNoclip()
+    end
+    if _G.speedEnabled and humanoid then
+        humanoid.WalkSpeed = _G.speedValue
+    end
+end)
+
+-- ---------------------------------------------------------------------------
+-- Button callbacks
+-- ---------------------------------------------------------------------------
+aimBtn.MouseButton1Click:Connect(function()
+    _G.aimEnabled = not _G.aimEnabled
+    aimBtn.Text = "AimHead: " .. (_G.aimEnabled and "ON" or "OFF")
+    aimBtn.BackgroundColor3 = _G.aimEnabled and Color3.fromRGB(0,170,0) or Color3.fromRGB(70,70,70)
+end)
+
+noclipBtn.MouseButton1Click:Connect(function()
+    _G.noclipEnabled = not _G.noclipEnabled
+    noclipBtn.Text = "Noclip: " .. (_G.noclipEnabled and "ON" or "OFF")
+    noclipBtn.BackgroundColor3 = _G.noclipEnabled and Color3.fromRGB(0,170,0) or Color3.fromRGB(70,70,70)
+    if _G.noclipEnabled then
+        applyNoclip()
+    else
+        removeNoclip()
+    end
+end)
+
+infJumpBtn.MouseButton1Click:Connect(function()
+    _G.infJumpEnabled = not _G.infJumpEnabled
+    infJumpBtn.Text = "InfiniteJump: " .. (_G.infJumpEnabled and "ON" or "OFF")
+    infJumpBtn.BackgroundColor3 = _G.infJumpEnabled and Color3.fromRGB(0,170,0) or Color3.fromRGB(70,70,70)
+    if _G.infJumpEnabled then
+        if not infJumpConn then
+            infJumpConn = UserInputService.JumpRequest:Connect(onJumpRequest)
+        end
+    else
+        if infJumpConn then
+            infJumpConn:Disconnect()
+            infJumpConn = nil
+        end
+    end
+end)
+
+speedBtn.MouseButton1Click:Connect(function()
+    _G.speedEnabled = not _G.speedEnabled
+    speedBtn.Text = "Speed: " .. (_G.speedEnabled and "ON" or "OFF")
+    speedBtn.BackgroundColor3 = _G.speedEnabled and Color3.fromRGB(0,170,0) or Color3.fromRGB(70,70,70)
+    if _G.speedEnabled then
+        -- Apply current value immediately
+        local val = tonumber(speedBox.Text)
+        if val and val > 0 then
+            _G.speedValue = val
+        end
+        if humanoid then
+            humanoid.WalkSpeed = _G.speedValue
+        end
+    else
+        if humanoid then
+            humanoid.WalkSpeed = 16
+        end
+    end
+end)
+
+-- Update speed value when the TextBox loses focus or Enter is pressed
+speedBox.FocusLost:Connect(function(enterPressed)
+    local val = tonumber(speedBox.Text)
+    if val and val > 0 then
+        _G.speedValue = val
+        if _G.speedEnabled and humanoid then
+            humanoid.WalkSpeed = _G.speedValue
+        end
+    else
+        speedBox.Text = tostring(_G.speedValue)
+    end
+end)
+
+-- Ensure UI stays on top
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
